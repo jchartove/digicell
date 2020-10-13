@@ -55,6 +55,14 @@ from sklearn.ensemble import GradientBoostingRegressor
 from matplotlib import pyplot as plt
 
 def process_BindingDB_omic(path = None, df = None, temp_ph = True):
+    """
+    Fit all three models
+            
+    :param X: train features
+    :param y: train targets
+        
+    TODO: parallelize this code across processors
+    """
     #TODO: allow imputer, allow binary classification
     
     if not os.path.exists(path):
@@ -113,6 +121,15 @@ def process_BindingDB_omic(path = None, df = None, temp_ph = True):
     
 def feature_select(df_data, drug_func_list = [drug2emb_encoder,smiles2daylight], 
                     prot_func_list = [CalculateConjointTriad, protein2emb_encoder]):
+                    
+    """
+    Fit all three models
+            
+    :param X: train features
+    :param y: train targets
+        
+    TODO: parallelize this code across processors
+    """
     start = time()
 
     column_name = 'SMILES'
@@ -138,12 +155,28 @@ def feature_select(df_data, drug_func_list = [drug2emb_encoder,smiles2daylight],
     return df_data
 
 def flattener(x):
+    """
+    Fit all three models
+            
+    :param X: train features
+    :param y: train targets
+        
+    TODO: parallelize this code across processors
+    """
     if isinstance(x, collections.Iterable):
         return [a for i in x for a in flattener(i)]
     else:
         return [x]
 
 def data_process_omic(df_data, first_pass, include_org = True):
+    """
+    Fit all three models
+            
+    :param X: train features
+    :param y: train targets
+        
+    TODO: parallelize this code across processors
+    """
     if include_org:
         cat_list = pd.get_dummies(df_data['Organism'], prefix='var')
         df_data=df_data.join(cat_list)
@@ -194,35 +227,55 @@ def data_process_omic(df_data, first_pass, include_org = True):
     return X_train,X_test,y_train,y_test,cat_list
     
 def get_typelist(X):
+    """
+    Fit all three models
+            
+    :param X: train features
+    :param y: train targets
+        
+    TODO: parallelize this code across processors
+    """
     typelist = []
     for i in list(X):
-        print(i, ':', type(X[i].iloc[0]))#, ':', X[i].iloc[1])
         if isinstance(X[i].iloc[0],np.ndarray):
-            print(len(X[i].iloc[0]))
             typelist.extend([i]*len(X[i].iloc[0]))
         elif isinstance(X[i].iloc[0],tuple):
             for n in X[i].iloc[0]:
                 if isinstance(n,np.ndarray):
-                    print(len(n))
-                    typelist.extend([i]*len(n))
+                     typelist.extend([i]*len(n))
         elif i[:4] == 'var_':
             typelist.append('organism')
         else:
             typelist.append(i)
     return typelist
 
-def model_metrics(model, typelist, X_test, y_test):
+def model_metrics(model, X_test, y_test, typelist = None):
+    """
+    Fit all three models
+            
+    :param X: train features
+    :param y: train targets
+        
+    TODO: parallelize this code across processors
+    """
     # Record actual values on test set
     #TODO: feature importances
     predictions = pd.DataFrame(y_test, columns = ['actual'])
-    predictions = model.predict(X_test)
+    
+    if isinstance(model,GBoostModel):
+        predictions = model.predict(X_test)
+    else:
+        predictions['mid'] = pd.Series(model.predict(X_test))
+        
+    predictions['actual'] = y_test
+    
     
     predictions['error'] = abs(predictions['actual'] - predictions['mid'])
     error1 = sum((predictions['error']<1)/len(predictions))
     error2 = sum((predictions['error']<2)/len(predictions))
     r = pearsonr(predictions['actual'],predictions['mid'])
     
-    print("Average error: ", mean(predictions['error']))
+    print("Average error: ", np.mean(predictions['error']))
     print("Fraction correct within one order of magnitude: ", error1 )
     print("Fraction correct within two orders of magnitude: ", error2 )
     print("Pearson's R = ",r)
@@ -232,23 +285,37 @@ def model_metrics(model, typelist, X_test, y_test):
     plt.ylabel('Predicted pIC50')
     plt.show()
     
-    importances = pd.DataFrame({'importance':np.round(model.feature_importances_,3)})
-    out = importances.sort_values('importance',ascending=False)
-    for i in range(len(importances)-len(typelist)):
-            typelist.append('organism')
+    importances = None
+    type_importance = None
+    if typelist is not None:
+        importances = pd.DataFrame({'importance':np.round(model.mid_model.feature_importances_,3)})
+        out = importances.sort_values('importance',ascending=False)
+        for i in range(len(importances)-len(typelist)):
+                typelist.append('organism')
 
-    importances["Type"] = typelist
-    type_importance = importances.groupby(by=['Type']).sum()
-    type_importance.sort_values('importance',ascending=False)
-    return
+        importances["Type"] = typelist
+        type_importance = importances.groupby(by=['Type']).sum()
+        type_importance.sort_values('importance',ascending=False)
+    return importances, type_importance
 
 
-def model_usage(model, model2, X_drug, X_target):
-    data = DeepPurpose.utils.data_process(X_drug, X_target, 0, 
-                                    model.drug_encoding, model.target_encoding, 
-                                    split_method='no_split')
+def model_usage(model, model2, X_drug, X_target, temp = 35, pH = 7, org = None):
+    """
+    Fit all three models
+            
+    :param X: train features
+    :param y: train targets
+        
+    TODO: parallelize this code across processors
+    """
+    data = data_process(X_drug, X_target, [0,0], 
+                        model.drug_encoding, model.target_encoding, 
+                        split_method='no_split')
     first_pass = model.predict(data)
-    pred = model2.predict_drug(X_drug,X_target,first_pass)
+    pred = model2.predict_drug(X_drug,X_target,first_pass,temp = 35, pH = 7, org = None)
+    print("Estimated pIC50: ", pred['mid'].values)
+    print("Lower bound: ", pred['lower'].values)
+    print("Upper bound: ", pred['upper'].values)
     return pred
 
 
@@ -265,6 +332,14 @@ class GBoostModel(BaseEstimator):
     def __init__(self, lower_alpha=0.1, upper_alpha=0.9, drug_func_list= [drug2emb_encoder,smiles2daylight], 
                     prot_func_list = [CalculateConjointTriad, protein2emb_encoder], temp_ph = True, org_list = None,
                     n_estimators = 10, init_model = None, **kwargs):
+        """
+        Fit all three models
+            
+        :param X: train features
+        :param y: train targets
+        
+        TODO: parallelize this code across processors
+        """
         self.lower_alpha = lower_alpha
         self.upper_alpha = upper_alpha
         self.init_model = init_model
@@ -306,12 +381,20 @@ class GBoostModel(BaseEstimator):
         self.upper_model.fit(train_scaled, y_train)
 
     def predict(self, Z):
-        test_scaled = self.scaler.transform(Z)
+        """
+        Fit all three models
+            
+        :param X: train features
+        :param y: train targets
+        
+        TODO: parallelize this code across processors
+        """
         predictions = pd.DataFrame()
-        predictions["lower"] = self.lower_model.predict(test_scaled)
-        predictions["mid"] = self.mid_model.predict(test_scaled)
-        predictions["upper"] = self.upper_model.predict(test_scaled)
+        predictions["lower"] = self.lower_model.predict(Z)
+        predictions["mid"] = self.mid_model.predict(Z)
+        predictions["upper"] = self.upper_model.predict(Z)
         self.predictions = predictions
+        return predictions
     
     def predict_drug(self, X_drug, X_target, first_pass = None, temp = 35, pH = 7, org = None):
         """
@@ -325,9 +408,9 @@ class GBoostModel(BaseEstimator):
         """
         if first_pass is None:
             proc = DeepPurpose.utils.data_process(X_drug, X_target, 0, 
-                                model.drug_encoding, model.target_encoding, 
+                                self.init_model.drug_encoding, model.target_encoding, 
                                 split_method='no_split')
-`           first_pass = model.init_model.predict(proc)
+            first_pass = self.init_model.predict(proc)
         
         df_data = pd.DataFrame()
         df_data['SMILES'] = X_drug
@@ -345,11 +428,15 @@ class GBoostModel(BaseEstimator):
         df_vars=df_data.columns.values.tolist()
         to_keep=[i for i in df_vars if i not in discard]
         X=df_data[to_keep]
-        X[len(X.columns)] = first_pass
+        X['estimate'] = first_pass
         self.typelist = get_typelist(X)
         Z = flattener(np.asarray(X))
-        
-        predictions = self.predict(Z)
+        typelist = get_typelist(X)
+        Z = np.asarray(flattener(np.asarray(X)))
+        s=np.isnan(Z)
+        Z[s]=0.0
+
+        predictions = self.predict(Z.reshape(1, -1))
 
         return predictions
 
